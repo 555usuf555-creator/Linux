@@ -1,0 +1,30 @@
+[Unit]
+Description=deploylab application
+After=network.target
+
+[Service]
+Type=simple
+User=deploylab
+Group=deploylab
+WorkingDirectory=/opt/deploylab/current
+ExecStart=/usr/bin/python3 /opt/deploylab/current/app.py 8099
+Restart=on-failure
+RestartSec=1
+
+MemoryMax=96M
+CPUQuota=40%
+TasksMax=32
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/opt/deploylab
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+LockPersonality=yes
+UMask=0077
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deploylab
