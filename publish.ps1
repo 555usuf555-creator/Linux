@@ -1,139 +1,159 @@
 ﻿# publish.ps1 - отправляет локальный репозиторий на GitHub.
 #
-# ВАЖНО: в этом файле нет и не будет паролей и токенов.
+# ВАЖНО: паролей и токенов в этом файле нет и не будет.
 # Логин и пароль спросит Git Credential Manager - отдельным окном.
-# В этот чат, в файлы и в историю ничего секретного не попадает.
 #
-# Идёт в паре с ОПУБЛИКОВАТЬ.bat, который зовёт этот файл.
+# ГЛАВНОЕ ПРАВИЛО ЭТОГО ФАЙЛА: git пишет ход работы в stderr, а
+# PowerShell при ErrorActionPreference=Stop считает это фатальной
+# ошибкой и обрывает скрипт на первой строке "To https://...".
+# Поэтому ВСЕ вызовы git идут через Git-Run, который временно
+# переключает режим и возвращает код возврата, а не исключение.
 
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $git = "D:\Git\cmd\git.exe"
 if (-not (Test-Path $git)) { $git = "git" }
 Set-Location $PSScriptRoot
 
-function Step($n, $t) { Write-Host ""; Write-Host "--- $n. $t ---" }
-
-Step 1 "Проверяю репозиторий"
-& $git rev-parse --git-dir 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Это не git-репозиторий. Папка должна содержать .git" }
-& $git status --short | Out-Null
-$dirty = & $git status --porcelain
-if ($dirty) {
-    Write-Host "Есть незакоммиченные изменения, добавляю и коммичу."
-    & $git add -A | Out-Null
-    & $git commit -q -m "update" | Out-Null
+# --- безопасный вызов git: никогда не роняет скрипт ---
+function Git-Run {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GArgs)
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    $lines = & $git @GArgs 2>&1
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $old
+    foreach ($l in $lines) {
+        $s = [string]$l
+        if ($s -and $s -notmatch '^\s*$') { Write-Host "   $s" }
+    }
+    return $code
 }
-Write-Host "Файлов под контролем: $((& $git ls-files | Measure-Object).Count)"
 
-Step 2 "Имя и почта для подписи коммитов"
+function Say($t) { Write-Host ""; Write-Host "--- $t ---" }
+
+Say "1. Проверяю репозиторий"
+$c = Git-Run "rev-parse" "--git-dir"
+if ($c -ne 0) { Write-Host "Это не git-репозиторий"; exit 1 }
+
+$dirty = (Git-Run "status" "--porcelain")
+if ($dirty -eq 0) { $isDirty = $true } else { $isDirty = $false }
+$dirtyOut = & $git status --porcelain 2>$null
+if ($dirtyOut) {
+    Write-Host "Есть незакоммиченные изменения, коммичу."
+    Git-Run "add" "-A" | Out-Null
+    Git-Run "commit" "-q" "-m" "update" | Out-Null
+}
+$files = (& $git ls-files | Measure-Object).Count
+Write-Host "Файлов под контролем: $files"
+Write-Host "Коммитов локально: $(& $git rev-list --count main 2>$null)"
+
+Say "2. Имя и почта для подписи коммитов"
 $name = & $git config user.name
 $mail = & $git config user.email
 if ($name -eq "CHANGE-ME" -or [string]::IsNullOrWhiteSpace($name)) {
-    $name = Read-Host "Как тебя подписать в коммитах (имя)"
+    $name = Read-Host "Имя для подписи"
 }
 if ([string]::IsNullOrWhiteSpace($name)) { $name = "Linux Author" }
 if ($mail -eq "change-me@example.com" -or [string]::IsNullOrWhiteSpace($mail)) {
     $mail = Read-Host "Почта для коммитов"
 }
 if ([string]::IsNullOrWhiteSpace($mail)) { $mail = "$name@localhost" }
-& $git config user.name $name
-& $git config user.email $mail
-Write-Host "Подпись: $name <$mail>  (только для этого репозитория)"
-Write-Host "Поменять позже: git config user.name 'Имя'"
+& $git config user.name $name | Out-Null
+& $git config user.email $mail | Out-Null
+Write-Host "Подпись: $name <$mail>  (только этот репозиторий)"
 
-Step 3 "Адрес репозитория на GitHub"
-$user = Read-Host "Твой логин на GitHub (без https:// и без @)"
+Say "3. Адрес репозитория"
+$user = Read-Host "Логин на GitHub (без https:// и без @)"
 $repo = Read-Host "Название репозитория"
 if ([string]::IsNullOrWhiteSpace($user) -or [string]::IsNullOrWhiteSpace($repo)) {
-    throw "Нужен логин и название репозитория"
+    Write-Host "Нужен логин и название"; exit 1
 }
 $url = "https://github.com/$user/$repo.git"
 Write-Host "Адрес: $url"
+Git-Run "remote" "remove" "origin" | Out-Null
+Git-Run "remote" "add" "origin" $url | Out-Null
 
-$existing = & $git remote get-url origin 2>&1
-if ($LASTEXITCODE -eq 0 -and $existing) {
-    Write-Host "origin уже был: $existing"
-    $ch = Read-Host "Перезаписать? (y/N)"
-    if ($ch -ne "y") { throw "Отмена - ничего не меняю" }
-}
-& $git remote set-url origin $url
-
-Step 4 "Имя ветки"
-# Ветка по умолчанию у git бывает master, а GitHub ждёт main.
-# Если ветка называется иначе - переименовываем, иначе push упадёт.
+Say "4. Имя ветки"
 $branch = & $git branch --show-current
-Write-Host "текущая ветка: $branch"
 if ($branch -ne "main") {
-    Write-Host "переименовываю $branch -> main"
-    & $git branch -M main
+    Write-Host "Было: $branch  ->  меняю на main (GitHub ждёт main)"
+    Git-Run "branch" "-M" "main" | Out-Null
 }
-Write-Host "ветка: $(& $git branch --show-current)"
+Write-Host "Ветка: $(& $git branch --show-current)"
 
-Step 5 "Отправляю"
+Say "5. Отправляю"
+Write-Host "Откроется окно входа от GitHub. Введи там логин и токен."
+Write-Host "Я его не вижу."
 Write-Host ""
-Write-Host "Сейчас откроется окно входа от GitHub."
-Write-Host "Введи там логин и токен. Токен я у тебя не вижу и не увижу."
-Write-Host ""
-
-& $git push -u origin main 2>&1 | ForEach-Object { Write-Host $_ }
-$rc = $LASTEXITCODE
+$rc = Git-Run "push" "-u" "origin" "main"
 
 if ($rc -ne 0) {
     Write-Host ""
-    Write-Host "--- СНАЧАЛА ПОНИМАЕМ, ЧТО ИМЕННО НЕ ТАК ---"
-    & $git fetch origin 2>&1 | ForEach-Object { Write-Host "   $_" }
-    $remoteCount = 0
-    $r = & $git rev-list --count origin/main 2>$null
-    if ($r) { $remoteCount = [int]$r }
-    $localCount = [int](& $git rev-list --count main)
+    Write-Host "=== ПЕРВАЯ ПОПЫТКА НЕ ПРОШЛА. РАЗБИРАЮСЬ ==="
     Write-Host ""
-    Write-Host "коммитов локально:  $localCount"
-    Write-Host "коммитов на GitHub: $remoteCount"
+    Git-Run "fetch" "origin" | Out-Null
+
+    $localHash = (& $git rev-parse main 2>$null)
+    $remoteLine = (& $git ls-remote origin refs/heads/main 2>$null)
+    $remoteHash = $null
+    if ($remoteLine) { $remoteHash = ($remoteLine -split '\s+')[0] }
+
+    Write-Host "локальный коммит: $(if($localHash){$localHash.Substring(0,7)}else{'?'})"
+    Write-Host "коммит на GitHub: $(if($remoteHash){$remoteHash.Substring(0,7)}else {'нет ветки main'})"
     Write-Host ""
 
-    if ($remoteCount -le 2 -and $localCount -gt $remoteCount) {
-        Write-Host "На GitHub 1-2 коммита - почти наверняка автосозданный README.md"
-        Write-Host "от самого GitHub. Он пустой и заменится нашим."
-        Write-Host ""
-        $ans = Read-Host "Перезаписать историю на GitHub? (y/N)"
-        if ($ans -eq "y") {
-            & $git push -u origin main --force 2>&1 | ForEach-Object { Write-Host $_ }
-            if ($LASTEXITCODE -eq 0) { $rc = 0; Write-Host "получилось" }
+    if ($remoteHash -and $remoteHash -ne $localHash) {
+        $rlog = (& $git log --oneline origin/main 2>$null | Measure-Object).Count
+        Write-Host "На GitHub лежит $rlog коммит(ов) плюс автосозданный README.md."
+        if ($rlog -le 2) {
+            Write-Host "Это пустой репозиторий. Наш README его заменит, ничего"
+            Write-Host "ценного там нет и потерять нечего."
+            Write-Host ""
+            $ans = Read-Host "Перезаписать? (y/N)"
+            if ($ans -eq "y") {
+                Write-Host "Отправляю с --force"
+                $rc = Git-Run "push" "-u" "origin" "main" "--force"
+            }
+        } else {
+            Write-Host "На GitHub больше коммитов, чем у нас. Возможно это чужой"
+            Write-Host "репозиторий. Перезаписывать не буду - спроси."
+            $ans = Read-Host "Перезаписать всё равно? (y/N)"
+            if ($ans -eq "y") { $rc = Git-Run "push" "-u" "origin" "main" "--force" }
         }
-    }
-
-    if ($rc -ne 0) {
-        Write-Host ""
-        Write-Host "--- ЧТО ДЕЛАТЬ ---"
-        Write-Host ""
-        Write-Host "1. Проверь адрес: https://github.com/$user/$repo"
-        Write-Host "   Регистр важен, пробелы не допускаются."
-        Write-Host ""
-        Write-Host "2. Выполни руками:"
-        Write-Host ('   cd "' + $PSScriptRoot + '"')
-        Write-Host ('   &' + $git + ' push -u origin main --force')
-        Write-Host ""
-        Write-Host "3. Если пароль не подходит - нужен токен."
-        Write-Host "   GitHub: Settings - Developer settings - Personal access tokens"
-        Write-Host "   Tokens (classic) - Generate new token, 30 дней, галочка repo."
-        Write-Host "   Вставляй токен ТОЛЬКО в окно Git. Не в чат, не в файлы."
-        throw "push не прошёл"
     }
 }
 
+if ($rc -ne 0) {
+    Write-Host ""
+    Write-Host "=== НЕ ПОЛУЧИЛОСЬ ==="
+    Write-Host ""
+    Write-Host "Скопируй этот текст и пришли мне - разберу."
+    Write-Host ""
+    Write-Host "Частые причины:"
+    Write-Host "  1. Репозиторий не создан или имя указано неверно."
+    Write-Host "  2. Пароль GitHub не подходит для git - нужен токен."
+    Write-Host "     GitHub: Settings - Developer settings - Personal access tokens"
+    Write-Host "     Tokens (classic) - Generate new token, 30 дней, галочка repo."
+    Write-Host "     Вставляй токен ТОЛЬКО в окно Git."
+    Write-Host "  3. Отклонил браузер на запрос входа."
+    exit 1
+}
+
 Write-Host ""
-Write-Host "--- УСПЕШНО ОТПРАВЛЕНО ---"
+Write-Host "=== ОТПРАВЛЕНО ==="
 Write-Host ""
 Write-Host "Репозиторий: https://github.com/$user/$repo"
 Write-Host ""
-Write-Host "Ссылка на конкретный файл для статей:"
-Write-Host "https://github.com/$user/$repo/blob/main/monagent/install.sh"
-Write-Host "https://github.com/$user/$repo/blob/main/backup/install.sh"
+Write-Host "Ссылки для статей:"
+Write-Host "  https://github.com/$user/$repo/blob/main/monagent/install.sh"
+Write-Host "  https://github.com/$user/$repo/blob/main/backup/install.sh"
 Write-Host ""
-Write-Host "Сырая ссылка (удобнее для скачивания):"
-Write-Host "https://raw.githubusercontent.com/$user/$repo/main/backup/appdata-verify.sh"
+Write-Host "Прямые ссылки на скачивание:"
+Write-Host "  https://raw.githubusercontent.com/$user/$repo/main/backup/appdata-verify.sh"
+Write-Host "  https://raw.githubusercontent.com/$user/$repo/main/monagent/monagent.py"
 Write-Host ""
-Write-Host "Теперь токен можно отозвать на GitHub:"
-Write-Host "Settings - Developer settings - Personal access tokens - Delete"
+Write-Host "Токен после этого можно отозвать:"
+Write-Host "  Settings - Developer settings - Personal access tokens - Delete"
+exit 0
