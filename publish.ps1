@@ -60,12 +60,21 @@ if ($LASTEXITCODE -eq 0 -and $existing) {
 }
 & $git remote set-url origin $url
 
-Step 4 "Отправляю"
+Step 4 "Имя ветки"
+# Ветка по умолчанию у git бывает master, а GitHub ждёт main.
+# Если ветка называется иначе - переименовываем, иначе push упадёт.
+$branch = & $git branch --show-current
+Write-Host "текущая ветка: $branch"
+if ($branch -ne "main") {
+    Write-Host "переименовываю $branch -> main"
+    & $git branch -M main
+}
+Write-Host "ветка: $(& $git branch --show-current)"
+
+Step 5 "Отправляю"
 Write-Host ""
 Write-Host "Сейчас откроется окно входа от GitHub."
 Write-Host "Введи там логин и токен. Токен я у тебя не вижу и не увижу."
-Write-Host ""
-Write-Host "Если окно не появилось - перечитай блок 'Что делать' ниже."
 Write-Host ""
 
 & $git push -u origin main 2>&1 | ForEach-Object { Write-Host $_ }
@@ -73,23 +82,45 @@ $rc = $LASTEXITCODE
 
 if ($rc -ne 0) {
     Write-Host ""
-    Write-Host "--- НЕ СРАБОТАЛО. Что делать ---"
+    Write-Host "--- СНАЧАЛА ПОНИМАЕМ, ЧТО ИМЕННО НЕ ТАК ---"
+    & $git fetch origin 2>&1 | ForEach-Object { Write-Host "   $_" }
+    $remoteCount = 0
+    $r = & $git rev-list --count origin/main 2>$null
+    if ($r) { $remoteCount = [int]$r }
+    $localCount = [int](& $git rev-list --count main)
     Write-Host ""
-    Write-Host "1. Проверь название репозитория. Оно в адресе:"
-    Write-Host "   https://github.com/ТВОЙ_ЛОГИН/НАЗВАНИЕ"
-    Write-Host "   Название чувствительно к регистру и не допускает пробелов."
+    Write-Host "коммитов локально:  $localCount"
+    Write-Host "коммитов на GitHub: $remoteCount"
     Write-Host ""
-    Write-Host "2. Убедись, что репозиторий создан и пуст."
-    Write-Host ""
-    Write-Host "3. Git мог не спросить пароль с первого раза. Тогда выполни руками:"
-    Write-Host ('   cd "' + $PSScriptRoot + '"')
-    Write-Host ('   &' + $git + ' push -u origin main')
-    Write-Host ""
-    Write-Host "4. Если просит пароль и не даёт - нужен токен, а не пароль."
-    Write-Host "   GitHub: Settings - Developer settings - Personal access tokens"
-    Write-Host "   Создай токен со сроком 30 дней и галочкой repo."
-    Write-Host "   Вставляй его ТОЛЬКО в окно Git, не в чат и не в этот файл."
-    throw "push не прошёл"
+
+    if ($remoteCount -le 2 -and $localCount -gt $remoteCount) {
+        Write-Host "На GitHub 1-2 коммита - почти наверняка автосозданный README.md"
+        Write-Host "от самого GitHub. Он пустой и заменится нашим."
+        Write-Host ""
+        $ans = Read-Host "Перезаписать историю на GitHub? (y/N)"
+        if ($ans -eq "y") {
+            & $git push -u origin main --force 2>&1 | ForEach-Object { Write-Host $_ }
+            if ($LASTEXITCODE -eq 0) { $rc = 0; Write-Host "получилось" }
+        }
+    }
+
+    if ($rc -ne 0) {
+        Write-Host ""
+        Write-Host "--- ЧТО ДЕЛАТЬ ---"
+        Write-Host ""
+        Write-Host "1. Проверь адрес: https://github.com/$user/$repo"
+        Write-Host "   Регистр важен, пробелы не допускаются."
+        Write-Host ""
+        Write-Host "2. Выполни руками:"
+        Write-Host ('   cd "' + $PSScriptRoot + '"')
+        Write-Host ('   &' + $git + ' push -u origin main --force')
+        Write-Host ""
+        Write-Host "3. Если пароль не подходит - нужен токен."
+        Write-Host "   GitHub: Settings - Developer settings - Personal access tokens"
+        Write-Host "   Tokens (classic) - Generate new token, 30 дней, галочка repo."
+        Write-Host "   Вставляй токен ТОЛЬКО в окно Git. Не в чат, не в файлы."
+        throw "push не прошёл"
+    }
 }
 
 Write-Host ""
