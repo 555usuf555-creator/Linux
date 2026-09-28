@@ -52,28 +52,51 @@ Write-Host "Коммитов локально: $(& $git rev-list --count main 2>
 Say "2. Имя и почта для подписи коммитов"
 $name = & $git config user.name
 $mail = & $git config user.email
-if ($name -eq "CHANGE-ME" -or [string]::IsNullOrWhiteSpace($name)) {
-    $name = Read-Host "Имя для подписи"
-}
+
+# Значения уже заданы - показываем и ждём Enter.
+# Спрашивать заново то, что скрипт и так знает, - раздражает.
+$haveName = ($name -and $name -ne "CHANGE-ME")
+$haveMail = ($mail -and $mail -ne "change-me@example.com")
+if ($haveName) { Write-Host "  уже задано имя: $name" }
+$inName = Read-Host "Имя для подписи"
+if (-not [string]::IsNullOrWhiteSpace($inName)) { $name = $inName }
 if ([string]::IsNullOrWhiteSpace($name)) { $name = "Linux Author" }
-if ($mail -eq "change-me@example.com" -or [string]::IsNullOrWhiteSpace($mail)) {
-    $mail = Read-Host "Почта для коммитов"
-}
+if ($haveMail) { Write-Host "  уже задана почта: $mail" }
+$inMail = Read-Host "Почта для коммитов"
+if (-not [string]::IsNullOrWhiteSpace($inMail)) { $mail = $inMail }
 if ([string]::IsNullOrWhiteSpace($mail)) { $mail = "$name@localhost" }
 & $git config user.name $name | Out-Null
 & $git config user.email $mail | Out-Null
 Write-Host "Подпись: $name <$mail>  (только этот репозиторий)"
 
 Say "3. Адрес репозитория"
-$user = Read-Host "Логин на GitHub (без https:// и без @)"
-$repo = Read-Host "Название репозитория"
+
+# Логин и название вытаскиваем из уже настроенного origin.
+$defUser = ""; $defRepo = ""
+$url0 = & $git remote get-url origin 2>$null
+if ($url0 -and ($url0 -match 'github\.com[:/]([^/]+)/([^/]+?)(\.git)?$')) {
+    $defUser = $Matches[1]
+    $defRepo = $Matches[2]
+    Write-Host "  origin уже настроен: $url0"
+}
+$inUser = Read-Host "Логин на GitHub"
+$user = $(if ([string]::IsNullOrWhiteSpace($inUser)) { $defUser } else { $inUser })
+$inRepo = Read-Host "Название репозитория"
+$repo = $(if ([string]::IsNullOrWhiteSpace($inRepo)) { $defRepo } else { $inRepo })
+
 if ([string]::IsNullOrWhiteSpace($user) -or [string]::IsNullOrWhiteSpace($repo)) {
-    Write-Host "Нужен логин и название"; exit 1
+    Write-Host "Не удалось определить логин и название. Проверь origin:"
+    Git-Run "remote" "-v" | Out-Null
+    exit 1
 }
 $url = "https://github.com/$user/$repo.git"
-Write-Host "Адрес: $url"
-Git-Run "remote" "remove" "origin" | Out-Null
-Git-Run "remote" "add" "origin" $url | Out-Null
+Write-Host "Используем: $url"
+if ((& $git remote get-url origin 2>$null) -eq $url) {
+    Write-Host "Адрес не меняется"
+} else {
+    Git-Run "remote" "remove" "origin" | Out-Null
+    Git-Run "remote" "add" "origin" $url | Out-Null
+}
 
 Say "4. Имя ветки"
 $branch = & $git branch --show-current
