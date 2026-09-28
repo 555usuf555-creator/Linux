@@ -1,0 +1,15 @@
+﻿# Секреты никогда не коммитятся - на случай если забудешь
+*.key
+*.pem
+*.crt
+!.gitignore
+!README.md
+
+# рабочее
+*.log
+*.bak
+*.bak.*
+*.bak.*.*
+report-*.txt
+server.log
+keysrv/
