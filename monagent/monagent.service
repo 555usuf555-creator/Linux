@@ -1,0 +1,55 @@
+[Unit]
+Description=monagent - агент мониторинга с HTTPS-эндпоинтами
+Documentation=file:///opt/monagent/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=monagent
+Group=monagent
+ExecStart=/usr/bin/python3 /opt/monagent/monagent.py 127.0.0.1 8443 /opt/monagent/tls/server.crt /opt/monagent/tls/server.key
+Restart=always
+RestartSec=3
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# --- лимиты: агент не имеет права съесть машину ---
+MemoryMax=128M
+CPUQuota=25%
+TasksMax=64
+LimitNOFILE=256
+
+# --- изоляция ---
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/opt/monagent
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+UMask=0077
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=monagent
+
+[Install]
+WantedBy=multi-user.target

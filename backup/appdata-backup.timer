@@ -1,0 +1,11 @@
+[Unit]
+Description=Запуск бэкапа каждый день в 03:15
+Requires=appdata-backup.service
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=900
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Ежедневный снапшот данных приложения
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/appdata-backup.sh
+# важно: бэкап без проверки - это надежда
+ExecStartPost=/usr/local/sbin/appdata-verify.sh
+User=root
+Nice=10
+IOSchedulingClass=idle
+# снапшоты большие, даём время
+TimeoutStartSec=1800

@@ -1,0 +1,9 @@
+[Unit]
+Description=Проверка восстановимости бэкапа
+After=appdata-backup.service
+Requires=appdata-backup.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/appdata-verify.sh
+User=root
